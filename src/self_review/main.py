@@ -275,7 +275,7 @@ def discover(
             continue
         seen_remotes.add(remote)
 
-        # Count commits from author in year
+        # Count commits from author in year (search all branches)
         try:
             result = subprocess.run(
                 [
@@ -283,6 +283,7 @@ def discover(
                     "-C",
                     str(repo_dir),
                     "log",
+                    "--all",
                     f"--author={author}",
                     f"--since={since}",
                     f"--until={until}",

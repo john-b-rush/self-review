@@ -31,6 +31,7 @@ def get_commits(
     cmd = [
         "git",
         "log",
+        "--all",
         "--author",
         author,
         "--pretty=format:%H%x1f%an%x1f%ci%x1f%B%x1e",
