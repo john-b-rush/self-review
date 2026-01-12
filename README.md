@@ -17,7 +17,7 @@ Stop dreading performance review season. This tool scans your commits across mul
 Requires Python 3.12+ and [uv](https://github.com/astral-sh/uv).
 
 ```bash
-git clone https://github.com/yourname/self-review.git
+git clone https://github.com/john-b-rush/self-review.git
 cd self-review
 uv sync
 ```
@@ -41,7 +41,7 @@ self-review review --all            # Full year summary
 
 ## Configuration
 
-Copy `config.example.yaml` to `config.yaml`:
+Create a `config.yaml` (or run `self-review init`):
 
 ```yaml
 author: "your-name"    # Partial match on git author
@@ -101,6 +101,11 @@ self-review export -o commits.json
 1. **Fetch** pulls commit metadata (hash, date, message, files) from git and stores in SQLite
 2. **Review** queries the cache, formats commits as a prompt, and shells out to `claude -p`
 3. Summaries are cached so re-running is instant (use `--force` to regenerate)
+
+## Privacy & Data
+
+This tool caches commit data locally in `self_review.db` and sends commit metadata (dates, messages, and file paths)
+to the `claude` CLI to generate summaries. Review/redact anything sensitive before running it on private repos.
 
 ## License
 

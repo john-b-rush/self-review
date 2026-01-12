@@ -4,11 +4,22 @@ version = "0.1.0"
 description = "Generate self-review summaries from git commit history using Claude"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MIT"
+license = { file = "LICENSE" }
+authors = [{ name = "John Rush" }]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "typer>=0.9.0",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/john-b-rush/self-review"
+Issues = "https://github.com/john-b-rush/self-review/issues"
 
 [project.optional-dependencies]
 dev = [
