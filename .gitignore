@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# uv
+uv.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project
+*.db
+.ruff_cache/
+.ty_cache/
+dist/
+*.egg-info/
+
+# User data (keep config.example.yaml)
+config.yaml
+reviews/
