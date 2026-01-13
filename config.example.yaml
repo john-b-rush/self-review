@@ -4,11 +4,19 @@
 # Your git author name or email (partial match supported)
 author: "your-name"
 
+# Your GitHub username (for PR data - may differ from git author)
+github_author: "your-github-username"
+
 # Year to review
 year: 2025
 
-# List of git repositories to include
+# List of local git repositories to include
 repos:
   - ~/repos/project-1
   - ~/repos/project-2
   # Add more repos here, or use `self-review discover --update` to auto-populate
+
+# GitHub repos to fetch PR data from (owner/repo format)
+github_repos:
+  - owner/repo-1
+  - owner/repo-2

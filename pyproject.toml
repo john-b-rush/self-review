@@ -1,6 +1,6 @@
 [project]
 name = "self-review"
-version = "0.1.1"
+version = "0.2.0"
 description = "Generate self-review summaries from git commit history using Claude"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -62,8 +62,8 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["self_review"]
 
-[tool.ty]
-src = ["src"]
+[tool.ty.environment]
+root = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

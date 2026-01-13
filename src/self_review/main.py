@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 import yaml
 
-from self_review import db, git, review
+from self_review import db, git, github, review
 
 app = typer.Typer(help="Generate self-review summaries from git commit history.")
 
@@ -115,14 +115,25 @@ def review_cmd(
                 typer.echo(existing.content)
                 continue
 
+        # Get commits
         commits = db.get_commits_by_period(start, end, author=author)
         typer.echo(f"Found {len(commits)} commits")
 
-        if not commits:
-            typer.echo("No commits found for this period.")
+        # Get PR data
+        prs = db.get_prs_by_period(start, end)
+        reviews_given = db.get_reviews_by_period(start, end)
+        comments_given = db.get_comments_by_period(start, end)
+        typer.echo(
+            f"Found {len(prs)} PRs, {len(reviews_given)} reviews, {len(comments_given)} comments"
+        )
+
+        if not commits and not prs and not reviews_given:
+            typer.echo("No activity found for this period.")
             continue
 
-        summary_text = review.generate_summary(commits, period)
+        summary_text = review.generate_summary(
+            commits, period, prs=prs, reviews=reviews_given, comments=comments_given
+        )
         typer.echo(summary_text)
 
         # Cache the summary
@@ -336,6 +347,71 @@ def discover(
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
         typer.echo(f"Updated config.yaml with {len(results)} repos.")
+
+
+@app.command()
+def prs(
+    config: Path = typer.Option(CONFIG_PATH, "--config", "-c", help="Path to config file"),
+) -> None:
+    """Fetch PR data (authored PRs, reviews given, comments) from GitHub."""
+    cfg = load_config(config)
+    github_author = cfg.get("github_author")
+    github_repos = cfg.get("github_repos", [])
+    year = cfg.get("year", datetime.now().year)
+
+    if not github_author:
+        typer.echo("Missing 'github_author' in config.yaml", err=True)
+        typer.echo("Add your GitHub username to fetch PR data.")
+        raise typer.Exit(1)
+
+    if not github_repos:
+        typer.echo("Missing 'github_repos' in config.yaml", err=True)
+        typer.echo("Add GitHub repos (owner/repo format) to fetch PR data from.")
+        raise typer.Exit(1)
+
+    start_date = f"{year}-01-01"
+    end_date = f"{year + 1}-01-01"
+
+    db.init_db()
+
+    total_prs = 0
+    total_reviews = 0
+    total_comments = 0
+
+    for repo in github_repos:
+        typer.echo(f"\nFetching from {repo}...")
+
+        try:
+            result = github.fetch_all_pr_data(repo, github_author, start_date, end_date)
+
+            # Save PRs
+            new_prs = 0
+            for pr in result.prs_authored:
+                if db.upsert_pull_request(pr):
+                    new_prs += 1
+            typer.echo(f"  PRs authored: {len(result.prs_authored)} ({new_prs} new)")
+            total_prs += len(result.prs_authored)
+
+            # Save reviews given
+            new_reviews = 0
+            for rev in result.reviews_given:
+                if db.upsert_review_given(rev):
+                    new_reviews += 1
+            typer.echo(f"  Reviews given: {len(result.reviews_given)} ({new_reviews} new)")
+            total_reviews += len(result.reviews_given)
+
+            # Save comments given
+            new_comments = 0
+            for comment in result.comments_given:
+                if db.upsert_comment_given(comment):
+                    new_comments += 1
+            typer.echo(f"  Comments given: {len(result.comments_given)} ({new_comments} new)")
+            total_comments += len(result.comments_given)
+
+        except Exception as e:
+            typer.echo(f"  Error: {e}", err=True)
+
+    typer.echo(f"\nTotal: {total_prs} PRs, {total_reviews} reviews, {total_comments} comments")
 
 
 if __name__ == "__main__":

@@ -3,41 +3,75 @@
 import json
 import subprocess
 
-from self_review.db import Commit
+from self_review.db import CommentGiven, Commit, PullRequest, ReviewGiven
 
 
-def generate_summary(commits: list[Commit], period: str) -> str:
+def generate_summary(
+    commits: list[Commit],
+    period: str,
+    prs: list[PullRequest] | None = None,
+    reviews: list[ReviewGiven] | None = None,
+    comments: list[CommentGiven] | None = None,
+) -> str:
     """
-    Generate a summary of commits using Claude Code.
+    Generate a summary of work using Claude Code.
 
     Args:
         commits: List of commits to summarize
         period: Time period label (e.g., "2024-Q1")
+        prs: Optional list of PRs authored
+        reviews: Optional list of reviews given
+        comments: Optional list of comments given
 
     Returns:
         Generated summary text
     """
-    if not commits:
-        return f"No commits found for {period}."
+    sections = []
 
-    # Format commits for the prompt
-    commit_text = format_commits_for_prompt(commits)
+    # Commits section
+    if commits:
+        commit_text = format_commits_for_prompt(commits)
+        sections.append(f"## Git Commits ({len(commits)} total)\n\n{commit_text}")
 
-    prompt = f"""Analyze these git commits from {period} and generate a self-review summary.
+    # PRs authored section
+    if prs:
+        pr_text = format_prs_for_prompt(prs)
+        sections.append(f"## Pull Requests Authored ({len(prs)} total)\n\n{pr_text}")
 
-## Commits
+    # Reviews given section
+    if reviews:
+        review_text = format_reviews_for_prompt(reviews)
+        sections.append(f"## Code Reviews Given ({len(reviews)} total)\n\n{review_text}")
 
-{commit_text}
+    # Comments section (only include substantive ones)
+    if comments:
+        substantive = [c for c in comments if len(c.body) > 50]
+        if substantive:
+            comment_text = format_comments_for_prompt(substantive)
+            sections.append(
+                f"## Substantive PR Comments ({len(substantive)} of {len(comments)} total)\n\n{comment_text}"
+            )
+
+    if not sections:
+        return f"No activity found for {period}."
+
+    all_content = "\n\n".join(sections)
+
+    prompt = f"""Analyze this work activity from {period} and generate a self-review summary.
+
+{all_content}
 
 ## Instructions
 
-Generate two sections:
+Generate a performance self-review with these sections:
 
 1. **Summary**: A 2-3 paragraph narrative of the work done, highlighting major themes, projects, and impact.
 
-2. **Key Accomplishments**: Bullet points of specific accomplishments, grouped by theme/project area.
+2. **Key Accomplishments**: Bullet points of specific accomplishments, grouped by theme/project area. Include both code contributions AND collaboration/review work.
 
-Focus on impact and outcomes, not just listing changes. This is for a performance self-review."""
+3. **Team Contributions**: Highlight significant code review activity, feedback given to teammates, and cross-team collaboration.
+
+Focus on impact and outcomes. For code reviews, note patterns like pushing for better testing, code quality improvements, or architectural guidance."""
 
     # Shell out to claude
     result = subprocess.run(
@@ -64,6 +98,77 @@ def format_commits_for_prompt(commits: list[Commit]) -> str:
         lines.append(f"**{c.date[:10]}** [{c.repo}]")
         lines.append(f"{c.message}")
         lines.append(f"Files: {files_str}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def format_prs_for_prompt(prs: list[PullRequest]) -> str:
+    """Format PRs into a readable string for the prompt."""
+    lines = []
+    for pr in prs:
+        status = pr.state
+        if pr.merged_at:
+            status = "MERGED"
+
+        lines.append(f"**{pr.created_at[:10]}** [{pr.repo}] #{pr.number} ({status})")
+        lines.append(f"{pr.title}")
+        lines.append(f"+{pr.additions}/-{pr.deletions} in {pr.changed_files} files")
+
+        # Include review feedback received (non-empty)
+        reviews = json.loads(pr.reviews_json)
+        feedback = [r for r in reviews if r.get("body")]
+        if feedback:
+            lines.append("Reviews received:")
+            for r in feedback[:3]:  # Limit to 3
+                body_preview = r["body"][:100].replace("\n", " ")
+                lines.append(f"  - {r['author']} ({r['state']}): {body_preview}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def format_reviews_for_prompt(reviews: list[ReviewGiven]) -> str:
+    """Format reviews given into a readable string for the prompt."""
+    lines = []
+
+    # Group by state for summary
+    by_state = {}
+    for r in reviews:
+        by_state.setdefault(r.state, []).append(r)
+
+    lines.append("Summary:")
+    for state, items in sorted(by_state.items()):
+        lines.append(f"  - {state}: {len(items)}")
+    lines.append("")
+
+    # Show substantive reviews (with body text)
+    substantive = [r for r in reviews if len(r.body) > 30]
+    if substantive:
+        lines.append("Notable review feedback given:")
+        for r in substantive[:15]:  # Limit
+            body_preview = r.body[:150].replace("\n", " ")
+            lines.append(
+                f"- **{r.submitted_at[:10]}** #{r.pr_number} ({r.pr_author}): {r.pr_title[:50]}"
+            )
+            lines.append(f"  [{r.state}] {body_preview}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def format_comments_for_prompt(comments: list[CommentGiven]) -> str:
+    """Format comments into a readable string for the prompt."""
+    lines = []
+
+    # Sort by length to show most substantive first
+    sorted_comments = sorted(comments, key=lambda c: len(c.body), reverse=True)
+
+    for c in sorted_comments[:15]:  # Limit
+        body_preview = c.body[:200].replace("\n", " ")
+        lines.append(f"- **{c.created_at[:10]}** #{c.pr_number} ({c.pr_author}): {c.pr_title[:50]}")
+        lines.append(f"  {body_preview}")
         lines.append("")
 
     return "\n".join(lines)
