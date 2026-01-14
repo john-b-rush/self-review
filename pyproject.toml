@@ -1,6 +1,6 @@
 [project]
 name = "self-review"
-version = "0.2.0"
+version = "0.3.0"
 description = "Generate self-review summaries from git commit history using Claude"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -1,6 +1,7 @@
 """CLI for self-review."""
 
 import json
+import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 import typer
 import yaml
 
-from self_review import db, git, github, review
+from self_review import db, git, github, review, slack
 
 app = typer.Typer(help="Generate self-review summaries from git commit history.")
 
@@ -127,12 +128,22 @@ def review_cmd(
             f"Found {len(prs)} PRs, {len(reviews_given)} reviews, {len(comments_given)} comments"
         )
 
-        if not commits and not prs and not reviews_given:
+        # Get Slack reaction stats
+        slack_stats = db.get_reaction_stats(start, end)
+        if slack_stats["total"] > 0:
+            typer.echo(f"Found {slack_stats['total']} Slack reactions")
+
+        if not commits and not prs and not reviews_given and slack_stats["total"] == 0:
             typer.echo("No activity found for this period.")
             continue
 
         summary_text = review.generate_summary(
-            commits, period, prs=prs, reviews=reviews_given, comments=comments_given
+            commits,
+            period,
+            prs=prs,
+            reviews=reviews_given,
+            comments=comments_given,
+            slack_stats=slack_stats if slack_stats["total"] > 0 else None,
         )
         typer.echo(summary_text)
 
@@ -412,6 +423,91 @@ def prs(
             typer.echo(f"  Error: {e}", err=True)
 
     typer.echo(f"\nTotal: {total_prs} PRs, {total_reviews} reviews, {total_comments} comments")
+
+
+@app.command(name="slack")
+def slack_cmd(
+    config: Path = typer.Option(CONFIG_PATH, "--config", "-c", help="Path to config file"),
+) -> None:
+    """Fetch Slack reactions data."""
+    cfg = load_config(config)
+    year = cfg.get("year", datetime.now().year)
+
+    # Get Slack credentials from config or env
+    slack_token = cfg.get("slack_token") or os.environ.get("SLACK_TOKEN")
+    slack_cookie = cfg.get("slack_cookie") or os.environ.get("SLACK_COOKIE")
+
+    if not slack_token or not slack_cookie:
+        typer.echo("Missing Slack credentials.", err=True)
+        typer.echo("")
+        typer.echo("Add to config.yaml:")
+        typer.echo("  slack_token: xoxc-your-token")
+        typer.echo("  slack_cookie: xoxd-your-cookie")
+        typer.echo("")
+        typer.echo("Or set environment variables:")
+        typer.echo("  export SLACK_TOKEN=xoxc-...")
+        typer.echo("  export SLACK_COOKIE=xoxd-...")
+        typer.echo("")
+        typer.echo("To get these values:")
+        typer.echo("  1. Open Slack in your browser")
+        typer.echo("  2. Open Developer Tools (F12)")
+        typer.echo("  3. Go to Application > Cookies")
+        typer.echo("  4. Find the 'd' cookie (starts with xoxd-)")
+        typer.echo("  5. Go to Console and run:")
+        typer.echo("     JSON.parse(localStorage.localConfig_v2).teams[")
+        typer.echo("       JSON.parse(localStorage.localConfig_v2).lastActiveTeamId")
+        typer.echo("     ].token")
+        raise typer.Exit(1)
+
+    # Test auth
+    typer.echo("Testing Slack authentication...")
+    auth_info = slack.test_auth(slack_token, slack_cookie)
+    if not auth_info:
+        typer.echo("Authentication failed. Check your token and cookie.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Authenticated as {auth_info['user']} in {auth_info['team']}")
+
+    start_date = f"{year}-01-01"
+    end_date = f"{year + 1}-01-01"
+
+    db.init_db()
+
+    typer.echo(f"\nFetching reactions for {year}...")
+    typer.echo("Scanning channels (this may take a minute)...")
+
+    counts = {"total": 0, "new": 0}
+
+    def on_reaction(reaction: db.SlackReaction) -> None:
+        counts["total"] += 1
+        if db.upsert_slack_reaction(reaction):
+            counts["new"] += 1
+
+    def progress(channel: str, count: int) -> None:
+        typer.echo(f"  #{channel}: {count} reactions")
+
+    slack.fetch_reactions(
+        slack_token,
+        slack_cookie,
+        auth_info["user_id"],
+        start_date,
+        end_date,
+        progress_callback=progress,
+        on_reaction=on_reaction,
+    )
+
+    typer.echo(f"\nFound {counts['total']} reactions ({counts['new']} new)")
+
+    # Show summary
+    if counts["total"] > 0:
+        stats = db.get_reaction_stats(start_date, end_date)
+        typer.echo("\nTop emojis:")
+        for emoji, count in stats["by_emoji"][:3]:
+            typer.echo(f"  :{emoji}: {count}")
+
+        typer.echo("\nTop channels:")
+        for channel, count in stats["by_channel"][:3]:
+            typer.echo(f"  #{channel}: {count}")
 
 
 if __name__ == "__main__":

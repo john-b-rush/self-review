@@ -20,3 +20,13 @@ repos:
 github_repos:
   - owner/repo-1
   - owner/repo-2
+
+# Slack credentials (optional - for reaction tracking)
+# Get these from your browser while logged into Slack:
+#   1. Open Developer Tools (F12) > Application > Cookies
+#   2. Copy the 'd' cookie value (starts with xoxd-)
+#   3. In Console, run: JSON.parse(localStorage.localConfig_v2).teams[
+#        JSON.parse(localStorage.localConfig_v2).lastActiveTeamId].token
+# Or set SLACK_TOKEN and SLACK_COOKIE environment variables
+# slack_token: xoxc-your-token
+# slack_cookie: xoxd-your-cookie

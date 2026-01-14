@@ -69,6 +69,19 @@ class CommentGiven:
     created_at: str
 
 
+@dataclass
+class SlackReaction:
+    """Represents a Slack reaction given by the user."""
+
+    emoji: str
+    channel_id: str
+    channel_name: str
+    message_ts: str  # Slack timestamp (unique message ID)
+    message_user: str  # Who posted the message
+    message_text: str  # Preview of the message
+    reacted_at: str  # When the reaction was added (derived from message_ts)
+
+
 DB_PATH = Path("self_review.db")
 
 
@@ -181,6 +194,30 @@ def init_db(db_path: Path = DB_PATH) -> None:
 
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_comments_created ON comments_given(created_at)
+    """)
+
+    # Slack tables
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS slack_reactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            emoji TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            channel_name TEXT NOT NULL,
+            message_ts TEXT NOT NULL,
+            message_user TEXT NOT NULL,
+            message_text TEXT,
+            reacted_at TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            UNIQUE(channel_id, message_ts, emoji)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_reactions_reacted ON slack_reactions(reacted_at)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_reactions_emoji ON slack_reactions(emoji)
     """)
 
     conn.commit()
@@ -543,3 +580,123 @@ def get_comments_by_period(
         )
         for row in rows
     ]
+
+
+def upsert_slack_reaction(reaction: SlackReaction, db_path: Path = DB_PATH) -> bool:
+    """Insert or update a Slack reaction. Returns True if new."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id FROM slack_reactions WHERE channel_id = ? AND message_ts = ? AND emoji = ?",
+        (reaction.channel_id, reaction.message_ts, reaction.emoji),
+    )
+    is_new = cursor.fetchone() is None
+
+    cursor.execute(
+        """
+        INSERT INTO slack_reactions (emoji, channel_id, channel_name, message_ts,
+                                     message_user, message_text, reacted_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(channel_id, message_ts, emoji) DO UPDATE SET
+            channel_name = excluded.channel_name,
+            message_user = excluded.message_user,
+            message_text = excluded.message_text,
+            fetched_at = excluded.fetched_at
+        """,
+        (
+            reaction.emoji,
+            reaction.channel_id,
+            reaction.channel_name,
+            reaction.message_ts,
+            reaction.message_user,
+            reaction.message_text,
+            reaction.reacted_at,
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+    return is_new
+
+
+def get_reactions_by_period(
+    start_date: str,
+    end_date: str,
+    db_path: Path = DB_PATH,
+) -> list[SlackReaction]:
+    """Get Slack reactions within a date range."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    query = "SELECT * FROM slack_reactions WHERE reacted_at >= ? AND reacted_at < ? ORDER BY reacted_at DESC"
+    cursor.execute(query, [start_date, end_date])
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        SlackReaction(
+            emoji=row["emoji"],
+            channel_id=row["channel_id"],
+            channel_name=row["channel_name"],
+            message_ts=row["message_ts"],
+            message_user=row["message_user"],
+            message_text=row["message_text"] or "",
+            reacted_at=row["reacted_at"],
+        )
+        for row in rows
+    ]
+
+
+def get_reaction_stats(
+    start_date: str,
+    end_date: str,
+    db_path: Path = DB_PATH,
+) -> dict:
+    """Get aggregated Slack reaction stats for a period."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    # Total count
+    cursor.execute(
+        "SELECT COUNT(*) as total FROM slack_reactions WHERE reacted_at >= ? AND reacted_at < ?",
+        [start_date, end_date],
+    )
+    total = cursor.fetchone()["total"]
+
+    # By emoji
+    cursor.execute(
+        """
+        SELECT emoji, COUNT(*) as count
+        FROM slack_reactions
+        WHERE reacted_at >= ? AND reacted_at < ?
+        GROUP BY emoji
+        ORDER BY count DESC
+        LIMIT 10
+        """,
+        [start_date, end_date],
+    )
+    by_emoji = [(row["emoji"], row["count"]) for row in cursor.fetchall()]
+
+    # By channel
+    cursor.execute(
+        """
+        SELECT channel_name, COUNT(*) as count
+        FROM slack_reactions
+        WHERE reacted_at >= ? AND reacted_at < ?
+        GROUP BY channel_name
+        ORDER BY count DESC
+        LIMIT 10
+        """,
+        [start_date, end_date],
+    )
+    by_channel = [(row["channel_name"], row["count"]) for row in cursor.fetchall()]
+
+    conn.close()
+
+    return {
+        "total": total,
+        "by_emoji": by_emoji,
+        "by_channel": by_channel,
+    }

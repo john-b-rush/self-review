@@ -12,6 +12,7 @@ def generate_summary(
     prs: list[PullRequest] | None = None,
     reviews: list[ReviewGiven] | None = None,
     comments: list[CommentGiven] | None = None,
+    slack_stats: dict | None = None,
 ) -> str:
     """
     Generate a summary of work using Claude Code.
@@ -22,6 +23,7 @@ def generate_summary(
         prs: Optional list of PRs authored
         reviews: Optional list of reviews given
         comments: Optional list of comments given
+        slack_stats: Optional dict with Slack reaction stats
 
     Returns:
         Generated summary text
@@ -52,6 +54,13 @@ def generate_summary(
                 f"## Substantive PR Comments ({len(substantive)} of {len(comments)} total)\n\n{comment_text}"
             )
 
+    # Slack reactions section
+    if slack_stats and slack_stats.get("total", 0) > 0:
+        slack_text = format_slack_stats_for_prompt(slack_stats)
+        sections.append(
+            f"## Slack Engagement ({slack_stats['total']} reactions)\n\n{slack_text}"
+        )
+
     if not sections:
         return f"No activity found for {period}."
 
@@ -70,6 +79,8 @@ Generate a performance self-review with these sections:
 2. **Key Accomplishments**: Bullet points of specific accomplishments, grouped by theme/project area. Include both code contributions AND collaboration/review work.
 
 3. **Team Contributions**: Highlight significant code review activity, feedback given to teammates, and cross-team collaboration.
+
+4. **Slack Engagement** (if data present): Summarize patterns in emoji reactions - celebrating team wins, supporting colleagues, engaging across different channels. Note top channels and what they represent (e.g., #customerwins = celebrating customer success, #dev-announce = staying engaged with engineering updates).
 
 Focus on impact and outcomes. For code reviews, note patterns like pushing for better testing, code quality improvements, or architectural guidance."""
 
@@ -170,5 +181,26 @@ def format_comments_for_prompt(comments: list[CommentGiven]) -> str:
         lines.append(f"- **{c.created_at[:10]}** #{c.pr_number} ({c.pr_author}): {c.pr_title[:50]}")
         lines.append(f"  {body_preview}")
         lines.append("")
+
+    return "\n".join(lines)
+
+
+def format_slack_stats_for_prompt(stats: dict) -> str:
+    """Format Slack reaction stats into a readable string for the prompt."""
+    lines = []
+
+    lines.append(f"Total reactions given: {stats['total']}")
+    lines.append("")
+
+    if stats.get("by_emoji"):
+        lines.append("Top emojis used:")
+        for emoji, count in stats["by_emoji"][:3]:
+            lines.append(f"  :{emoji}: {count}")
+        lines.append("")
+
+    if stats.get("by_channel"):
+        lines.append("Most active channels:")
+        for channel, count in stats["by_channel"][:3]:
+            lines.append(f"  #{channel}: {count}")
 
     return "\n".join(lines)
